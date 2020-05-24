@@ -51,45 +51,31 @@ void add_prompt(prompts_t *p, char *promptstr, bool echo)
     prompt_t *pr = snew(prompt_t);
     pr->prompt = promptstr;
     pr->echo = echo;
-    pr->result = NULL;
-    pr->resultsize = 0;
+    pr->result = strbuf_new_nm();
     sgrowarray(p->prompts, p->prompts_size, p->n_prompts);
     p->prompts[p->n_prompts++] = pr;
 }
-void prompt_ensure_result_size(prompt_t *pr, int newlen)
-{
-    if ((int)pr->resultsize < newlen) {
-        char *newbuf;
-        newlen = newlen * 5 / 4 + 512; /* avoid too many small allocs */
-
-        /*
-         * We don't use sresize / realloc here, because we will be
-         * storing sensitive stuff like passwords in here, and we want
-         * to make sure that the data doesn't get copied around in
-         * memory without the old copy being destroyed.
-         */
-        newbuf = snewn(newlen, char);
-        memcpy(newbuf, pr->result, pr->resultsize);
-        smemclr(pr->result, pr->resultsize);
-        sfree(pr->result);
-        pr->result = newbuf;
-        pr->resultsize = newlen;
-    }
-}
 void prompt_set_result(prompt_t *pr, const char *newstr)
 {
-    prompt_ensure_result_size(pr, strlen(newstr) + 1);
-    strcpy(pr->result, newstr);
+    strbuf_clear(pr->result);
+    put_datapl(pr->result, ptrlen_from_asciz(newstr));
+}
+const char *prompt_get_result_ref(prompt_t *pr)
+{
+    return pr->result->s;
+}
+char *prompt_get_result(prompt_t *pr)
+{
+    return dupstr(pr->result->s);
 }
 void free_prompts(prompts_t *p)
 {
     size_t i;
     for (i=0; i < p->n_prompts; i++) {
-	prompt_t *pr = p->prompts[i];
-	smemclr(pr->result, pr->resultsize); /* burn the evidence */
-	sfree(pr->result);
-	sfree(pr->prompt);
-	sfree(pr);
+        prompt_t *pr = p->prompts[i];
+        strbuf_free(pr->result);
+        sfree(pr->prompt);
+        sfree(pr);
     }
     sfree(p->prompts);
     sfree(p->name);
@@ -104,17 +90,17 @@ void free_prompts(prompts_t *p)
 bool conf_launchable(Conf *conf)
 {
     if (conf_get_int(conf, CONF_protocol) == PROT_SERIAL)
-	return conf_get_str(conf, CONF_serline)[0] != 0;
+        return conf_get_str(conf, CONF_serline)[0] != 0;
     else
-	return conf_get_str(conf, CONF_host)[0] != 0;
+        return conf_get_str(conf, CONF_host)[0] != 0;
 }
 
 char const *conf_dest(Conf *conf)
 {
     if (conf_get_int(conf, CONF_protocol) == PROT_SERIAL)
-	return conf_get_str(conf, CONF_serline);
+        return conf_get_str(conf, CONF_serline);
     else
-	return conf_get_str(conf, CONF_host);
+        return conf_get_str(conf, CONF_host);
 }
 
 /*
@@ -237,35 +223,62 @@ char *buildinfo(const char *newline)
 #else
     strbuf_catf(buf, ", emulating ");
 #endif
-	/* Most _MSC_VER values are defined here:
-	 * https://docs.microsoft.com/en-us/cpp/preprocessor/predefined-macros?view=vs-2017
-	 * VS 2019 isn't defined there yet, but it's easily found/confirmed.
-	 */
-    strbuf_catf(buf, "Visual Studio", newline);
-#if _MSC_VER == 1920
-	strbuf_catf(buf, " 2019 / MSVC++ 16.x");
-#elif _MSC_VER >= 1910 && _MSC_VER <= 1916
-	strbuf_catf(buf, " 2017 / MSVC++ 15.x");
+    strbuf_catf(buf, "Visual Studio");
+
+#if 0
+    /*
+     * List of _MSC_VER values and their translations taken from
+     * https://docs.microsoft.com/en-us/cpp/preprocessor/predefined-macros
+     *
+     * The pointless #if 0 branch containing this comment is there so
+     * that every real clause can start with #elif and there's no
+     * anomalous first clause. That way the patch looks nicer when you
+     * add extra ones.
+     */
+#elif _MSC_VER == 1923
+    strbuf_catf(buf, " 2019 (16.3)");
+#elif _MSC_VER == 1922
+    strbuf_catf(buf, " 2019 (16.2)");
+#elif _MSC_VER == 1921
+    strbuf_catf(buf, " 2019 (16.1)");
+#elif _MSC_VER == 1920
+    strbuf_catf(buf, " 2019 (16.0)");
+#elif _MSC_VER == 1916
+    strbuf_catf(buf, " 2017 version 15.9");
+#elif _MSC_VER == 1915
+    strbuf_catf(buf, " 2017 version 15.8");
+#elif _MSC_VER == 1914
+    strbuf_catf(buf, " 2017 version 15.7");
+#elif _MSC_VER == 1913
+    strbuf_catf(buf, " 2017 version 15.6");
+#elif _MSC_VER == 1912
+    strbuf_catf(buf, " 2017 version 15.5");
+#elif _MSC_VER == 1911
+    strbuf_catf(buf, " 2017 version 15.3");
+#elif _MSC_VER == 1910
+    strbuf_catf(buf, " 2017 RTW (15.0)");
 #elif _MSC_VER == 1900
-    strbuf_catf(buf, " 2015 / MSVC++ 14.0");
+    strbuf_catf(buf, " 2015 (14.0)");
 #elif _MSC_VER == 1800
-    strbuf_catf(buf, " 2013 / MSVC++ 12.0");
+    strbuf_catf(buf, " 2013 (12.0)");
 #elif _MSC_VER == 1700
-    strbuf_catf(buf, " 2012 / MSVC++ 11.0");
+    strbuf_catf(buf, " 2012 (11.0)");
 #elif _MSC_VER == 1600
-    strbuf_catf(buf, " 2010 / MSVC++ 10.0");
+    strbuf_catf(buf, " 2010 (10.0)");
 #elif _MSC_VER == 1500
-    strbuf_catf(buf, " 2008 / MSVC++ 9.0");
+    strbuf_catf(buf, " 2008 (9.0)");
 #elif _MSC_VER == 1400
-    strbuf_catf(buf, " 2005 / MSVC++ 8.0");
+    strbuf_catf(buf, " 2005 (8.0)");
 #elif _MSC_VER == 1310
-    strbuf_catf(buf, " 2003 / MSVC++ 7.1");
+    strbuf_catf(buf, " .NET 2003 (7.1)");
 #elif _MSC_VER == 1300
-    strbuf_catf(buf, " 2003 / MSVC++ 7.0");
+    strbuf_catf(buf, " .NET 2002 (7.0)");
+#elif _MSC_VER == 1200
+    strbuf_catf(buf, " 6.0");
 #else
     strbuf_catf(buf, ", unrecognised version");
 #endif
-    strbuf_catf(buf, " (_MSC_VER=%d)", (int)_MSC_VER);
+    strbuf_catf(buf, ", _MSC_VER=%d", (int)_MSC_VER);
 #endif
 
 #ifdef BUILDINFO_GTK
@@ -351,6 +364,14 @@ StripCtrlChars *nullseat_stripctrl_new(
     Seat *seat, BinarySink *bs_out, SeatInteractionContext sic) {return NULL;}
 bool nullseat_set_trust_status(Seat *seat, bool tr) { return false; }
 bool nullseat_set_trust_status_vacuously(Seat *seat, bool tr) { return true; }
+bool nullseat_verbose_no(Seat *seat) { return false; }
+bool nullseat_verbose_yes(Seat *seat) { return true; }
+bool nullseat_interactive_no(Seat *seat) { return false; }
+bool nullseat_interactive_yes(Seat *seat) { return true; }
+bool nullseat_get_cursor_position(Seat *seat, int *x, int *y) { return false; }
+
+bool null_lp_verbose_no(LogPolicy *lp) { return false; }
+bool null_lp_verbose_yes(LogPolicy *lp) { return true; }
 
 void sk_free_peer_info(SocketPeerInfo *pi)
 {

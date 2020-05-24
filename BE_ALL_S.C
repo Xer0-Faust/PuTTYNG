@@ -14,11 +14,7 @@
  * have tiny little source modules containing nothing but
  * declarations of appname, for as long as I can...
  */
-#ifdef PUTTYNG
-const char *const appname = "PuTTYNG";
-#else
 const char *const appname = "PuTTY";
-#endif
 
 #ifdef TELNET_DEFAULT
 const int be_default_protocol = PROT_TELNET;
@@ -30,7 +26,9 @@ const struct BackendVtable *const backends[] = {
     &ssh_backend,
     &telnet_backend,
     &rlogin_backend,
+    &supdup_backend,
     &raw_backend,
     &serial_backend,
+    &sshconn_backend,
     NULL
 };
