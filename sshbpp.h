@@ -5,13 +5,16 @@
 #ifndef PUTTY_SSHBPP_H
 #define PUTTY_SSHBPP_H
 
+typedef struct BinaryPacketProtocolVtable BinaryPacketProtocolVtable;
+
 struct BinaryPacketProtocolVtable {
-    void (*free)(BinaryPacketProtocol *); 
+    void (*free)(BinaryPacketProtocol *);
     void (*handle_input)(BinaryPacketProtocol *);
     void (*handle_output)(BinaryPacketProtocol *);
     PktOut *(*new_pktout)(int type);
     void (*queue_disconnect)(BinaryPacketProtocol *,
                              const char *msg, int category);
+    uint32_t packet_size_limit;
 };
 
 struct BinaryPacketProtocol {

@@ -81,7 +81,7 @@
 #include "mpint.h"
 #include "ecc.h"
 
-static NORETURN void fatal_error(const char *p, ...)
+static NORETURN PRINTF_LIKE(1, 2) void fatal_error(const char *p, ...)
 {
     va_list ap;
     fprintf(stderr, "testsc: ");
@@ -93,6 +93,10 @@ static NORETURN void fatal_error(const char *p, ...)
 }
 
 void out_of_memory(void) { fatal_error("out of memory"); }
+FILE *f_open(const Filename *filename, char const *mode, bool is_private)
+{ unreachable("this is a stub needed to link, and should never be called"); }
+void old_keyfile_warning(void)
+{ unreachable("this is a stub needed to link, and should never be called"); }
 
 /*
  * A simple deterministic PRNG, without any of the Fortuna
@@ -104,6 +108,7 @@ static uint64_t random_counter = 0;
 static const char *random_seedstr = NULL;
 static uint8_t random_buf[MAX_HASH_LEN];
 static size_t random_buf_limit = 0;
+static ssh_hash *random_hash;
 
 static void random_seed(const char *seedstr)
 {
@@ -118,12 +123,12 @@ void random_read(void *vbuf, size_t size)
     uint8_t *buf = (uint8_t *)vbuf;
     while (size-- > 0) {
         if (random_buf_limit == 0) {
-            ssh_hash *h = ssh_hash_new(&ssh_sha256);
-            put_asciz(h, random_seedstr);
-            put_uint64(h, random_counter);
+            ssh_hash_reset(random_hash);
+            put_asciz(random_hash, random_seedstr);
+            put_uint64(random_hash, random_counter);
             random_counter++;
-            random_buf_limit = ssh_hash_alg(h)->hlen;
-            ssh_hash_final(h, random_buf);
+            random_buf_limit = ssh_hash_alg(random_hash)->hlen;
+            ssh_hash_digest(random_hash, random_buf);
         }
         *buf++ = random_buf[random_buf_limit--];
     }
@@ -160,7 +165,7 @@ VOLATILE_WRAPPED_DEFN(, void, log_to_file, (const char *filename))
 static const char *outdir = NULL;
 char *log_filename(const char *basename, size_t index)
 {
-    return dupprintf("%s/%s.%04zu", outdir, basename, index);
+    return dupprintf("%s/%s.%04"SIZEu, outdir, basename, index);
 }
 
 static char *last_filename;
@@ -267,6 +272,11 @@ VOLATILE_WRAPPED_DEFN(static, size_t, looplimit, (size_t x))
     X(Y, ssh_sha256_sw)                         \
     X(Y, ssh_sha384)                            \
     X(Y, ssh_sha512)                            \
+    X(Y, ssh_sha3_224)                          \
+    X(Y, ssh_sha3_256)                          \
+    X(Y, ssh_sha3_384)                          \
+    X(Y, ssh_sha3_512)                          \
+    X(Y, ssh_shake256_114bytes)                 \
     /* end of list */
 
 #define HASH_TESTLIST(X, name) X(hash_ ## name)
@@ -289,6 +299,7 @@ VOLATILE_WRAPPED_DEFN(static, size_t, looplimit, (size_t x))
     X(mp_mul)                                   \
     X(mp_rshift_safe)                           \
     X(mp_divmod)                                \
+    X(mp_nthroot)                               \
     X(mp_modadd)                                \
     X(mp_modsub)                                \
     X(mp_modmul)                                \
@@ -334,6 +345,7 @@ static void test_mp_get_nbits(void)
         log_end();
     }
     mp_free(prev);
+    mp_free(z);
 }
 
 static void test_mp_from_decimal(void)
@@ -386,6 +398,7 @@ static void test_mp_string_format(char *(*mp_format)(mp_int *x))
         log_end();
         sfree(formatted);
     }
+    mp_free(z);
 }
 
 static void test_mp_get_decimal(void)
@@ -570,6 +583,23 @@ static void test_mp_divmod(void)
     mp_free(r);
 }
 
+static void test_mp_nthroot(void)
+{
+    mp_int *x = mp_new(256), *remainder = mp_new(256);
+
+    for (size_t i = 0; i < looplimit(32); i++) {
+        uint8_t sizes[1];
+        random_read(sizes, 1);
+        mp_random_bits_into(x, sizes[0]);
+        log_start();
+        mp_free(mp_nthroot(x, 3, remainder));
+        log_end();
+    }
+
+    mp_free(x);
+    mp_free(remainder);
+}
+
 static void test_mp_modarith(
     mp_int *(*mp_modarith)(mp_int *x, mp_int *y, mp_int *modulus))
 {
@@ -589,6 +619,10 @@ static void test_mp_modarith(
 
         mp_free(out);
     }
+
+    mp_free(base);
+    mp_free(exponent);
+    mp_free(modulus);
 }
 
 static void test_mp_modadd(void)
@@ -625,6 +659,8 @@ static void test_mp_invert_mod_2to(void)
 
         mp_free(out);
     }
+
+    mp_free(x);
 }
 
 static void test_mp_modsqrt(void)
@@ -647,7 +683,8 @@ static void test_mp_modsqrt(void)
 
     /* Do one initial call to cause the lazily initialised sub-context
      * to be set up. This will take a while, but it can't be helped. */
-    mp_modsqrt(sc, x, &success);
+    mp_int *unwanted = mp_modsqrt(sc, x, &success);
+    mp_free(unwanted);
 
     for (size_t i = 0; i < looplimit(8); i++) {
         mp_random_bits_into(x, bits - 1);
@@ -658,6 +695,7 @@ static void test_mp_modsqrt(void)
     }
 
     mp_free(x);
+    modsqrt_free(sc);
 }
 
 static WeierstrassCurve *wcurve(void)
@@ -801,6 +839,7 @@ static void test_ecc_weierstrass_multiply(void)
     }
     ecc_weierstrass_point_free(a);
     ecc_weierstrass_curve_free(wc);
+    mp_free(exponent);
 }
 
 static void test_ecc_weierstrass_is_identity(void)
@@ -999,6 +1038,7 @@ static void test_ecc_montgomery_multiply(void)
     }
     ecc_montgomery_point_free(a);
     ecc_montgomery_curve_free(wc);
+    mp_free(exponent);
 }
 
 static void test_ecc_montgomery_get_affine(void)
@@ -1131,6 +1171,7 @@ static void test_ecc_edwards_multiply(void)
     }
     ecc_edwards_point_free(a);
     ecc_edwards_curve_free(ec);
+    mp_free(exponent);
 }
 
 static void test_ecc_edwards_eq(void)
@@ -1302,16 +1343,10 @@ static void test_mac(const ssh2_macalg *malg)
         return;
     }
 
-    uint8_t *mkey = malg ? snewn(malg->keylen, uint8_t) : NULL;
+    uint8_t *mkey = snewn(malg->keylen, uint8_t);
     size_t datalen = 256;
-    size_t maclen = malg ? malg->len : 0;
+    size_t maclen = malg->len;
     uint8_t *data = snewn(datalen + maclen, uint8_t);
-
-    /* Preliminarily key the MAC, to avoid the divergence of control
-     * flow in which hmac_key() avoids some free()s the first time
-     * through */
-    random_read(mkey, malg->keylen);
-    ssh2_mac_setkey(m, make_ptrlen(mkey, malg->keylen));
 
     for (size_t i = 0; i < looplimit(16); i++) {
         random_read(mkey, malg->keylen);
@@ -1388,6 +1423,7 @@ int main(int argc, char **argv)
     bool test_names_given = false;
 
     memset(tests_to_run, 1, sizeof(tests_to_run));
+    random_hash = ssh_hash_new(&ssh_sha256);
 
     while (--argc > 0) {
         char *p = *++argv;
@@ -1441,6 +1477,15 @@ int main(int argc, char **argv)
     if (is_dry_run) {
         printf("Dry run (DynamoRIO instrumentation not detected)\n");
     } else {
+        /* Print the address of main() in this run. The idea is that
+         * if this image is compiled to be position-independent, then
+         * PC values in the logs won't match the ones you get if you
+         * disassemble the binary, so it'll be harder to match up the
+         * log messages to the code. But if you know the address of a
+         * fixed (and not inlined) function in both worlds, you can
+         * find out the offset between them. */
+        printf("Live run, main = %p\n", (void *)main);
+
         if (!outdir) {
             fprintf(stderr, "expected -O <outdir> option\n");
             return 1;
@@ -1548,11 +1593,13 @@ int main(int argc, char **argv)
         }
     }
 
+    ssh_hash_free(random_hash);
+
     if (npass == nrun) {
         printf("All tests passed\n");
         return 0;
     } else {
-        printf("%zu tests failed\n", nrun - npass);
+        printf("%"SIZEu" tests failed\n", nrun - npass);
         return 1;
     }
 }
