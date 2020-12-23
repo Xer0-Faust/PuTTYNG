@@ -609,7 +609,23 @@ static void do_telnet_read(Telnet *telnet, const char *buf, size_t len)
     }
 
     if (outbuf->len)
-	c_write(telnet, outbuf->u, outbuf->len);
+    {
+        c_write(telnet, outbuf->u, outbuf->len);
+    //Auto-login : prompt =="name:" or "ogin:" or "assword:"
+    //todo : custom prompt
+        if (!memcmp(outbuf->s + outbuf->len - 5, "name:", 5) | !memcmp(outbuf->s + outbuf->len - 5, "ogin:", 5))
+        {
+            telnet->bufsize = sk_write(telnet->s, conf_get_str(telnet->conf, CONF_username), strlen(conf_get_str(telnet->conf, CONF_username)));
+            telnet->bufsize = sk_write(telnet->s, "\n", 3);
+        }    
+        if (!memcmp(outbuf->s + outbuf->len - 8, "assword:", 8))
+        {
+            telnet->bufsize = sk_write(telnet->s, conf_get_str(telnet->conf, CONF_password), strlen(conf_get_str(telnet->conf, CONF_password)));
+            telnet->bufsize = sk_write(telnet->s, "\n", 3);
+        }
+           
+    }
+	
     strbuf_free(outbuf);
 }
 
@@ -655,6 +671,7 @@ static void telnet_receive(
 	telnet->in_synch = true;
     telnet->session_started = true;
     do_telnet_read(telnet, data, len);
+    
 }
 
 static void telnet_sent(Plug *plug, size_t bufsize)
