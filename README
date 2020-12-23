@@ -1,3 +1,11 @@
+主要修改了以下文件：
+CONFIG.C
+PUTTY.H
+SETTINGS.C 
+TELNET.C 
+WINDOWS/WINHELP.H
+
+
 PuTTYNG Specific Changes:
 BE_ALL_S.C
 CMDLINE.C
